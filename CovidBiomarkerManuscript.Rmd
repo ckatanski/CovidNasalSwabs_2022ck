@@ -1,0 +1,2286 @@
+---
+title: "CovidTRNABiomarkerManuscript"
+author: "Chris Katanski"
+date: "6/26/2022"
+output: html_document
+---
+
+
+#Set up
+```{r, set up packages etc., echo=FALSE, results="hide", warning=FALSE, message=FALSE}
+#Improt packages for plotting and data manipulation.
+library(ggplot2) #Praise be to Hadley
+library(scales)
+library(reshape2)
+library(tidyr)
+library(dplyr) #its important that this is after tidyr I think
+
+library(grid) #for faceting figures
+library(gridExtra) #more grid
+library(ggh4x) #For nested faceting
+library(ggpubr) #pables and p-values
+library(errors) #for error propegation
+library(gtools) #Combinations and permutations
+
+#Reading in svg files into r for ggplotting
+library(grImport2)
+library(grConvert)
+#Reading and plotting jpeg and PNG
+library(jpeg)
+library(png) #save hiRes png figures
+library(svglite) #for saving SVG figures with arbitrary resolution
+
+library(ggrepel) #The fanciest figure labels
+library(stringr) #playig games with strings for labels
+library(forcats) #Categorical variables need love too
+library(readxl) #Read in excel data
+
+library(pwr)
+library(pROC)
+
+#For nice log labels
+#library(cat.extras)
+#library(plotly)
+
+library(extrafont) #We want the fonts
+font_import() #Gotta get those fonts
+loadfonts() #oowww!
+
+#Set the global figure theme now
+theme_set(
+  theme_bw() + theme(#legend.position = "None", 
+        text = element_text(family = "Arial", size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(color = "black"),
+        strip.background = element_blank())
+  )
+
+#Define a function that excludes things
+`%nin%` = Negate(`%in%`)
+
+empty_graph <- ggplot() + theme_void()
+```
+
+#Set working directory
+```{r}
+#CHANGE THIS TO MATCH YOUR COMPUTER
+setwd("~/4SR/data/20220625_CovidBiomarkerPaper/")
+
+```
+
+#_
+
+#COVID
+##Read in basewise
+```{r}
+PATH <- "./data/20201020_CovidSwabs/5_tsv/hg19CCA+mito_adjusted_names+5Setc_020321/"
+# PATH="../../20201021_COVID/5_tsv/hg19CCA+mito_adjusted_names+5Setc/" #Old stuff is good still
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2","barcode", "junk3","bin_start","bin_stop","junk4"))%>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1, -junk2, -junk3, -junk4, -barcode, -library) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-18S-CW1-2-gc2_bc1" ="S - PV12416", 
+                       "TP-CK-18S-CW1-2-gc2_bc2" ="S - PV09457",
+                       "TP-CK-18S-CW1-2-gc2_bc3" ="S - PV09461",
+                       "TP-CK-18S-CW1-2-gc2_bc4" ="S - PV09463",
+                       "TP-CK-18S-CW1-2-gc2_bc5" ="S - PV09468_severe",
+                       "TP-CK-18S-CW1-2-gc2_bc6" ="S - PV09470",
+                       "TP-CK-18S-CW1-2-gc2_bc7" ="S - PV09492_severe",
+                       "TP-CK-18S-CW1-2-gc2_bc8" ="S - PV12337_severe",
+                       "TP-CK-18S-CW1-2-gc2_bc9" ="", #"PV12343 - S", #X
+                       "TP-CK-18S-CW1-2-gc2_bc10"="S - PV12355",
+                       "TP-CK-18S-CW1-2-gc2_bc11"="S - PV12357_severe",
+                       "TP-CK-18S-CW1-2-gc2_bc12"="S - PV12364",
+                       
+                       "TP-CK-18S-CW2-1-gc2_bc1" ="", #"PV12368 - S", #X
+                       "TP-CK-18S-CW2-1-gc2_bc2" ="S - PV12369",
+                       "TP-CK-18S-CW2-1-gc2_bc3" ="S - PV12372",
+                       "TP-CK-18S-CW2-1-gc2_bc4" ="S - PV12381",
+                       "TP-CK-18S-CW2-1-gc2_bc5" ="S - PV12382",
+                       "TP-CK-18S-CW2-1-gc2_bc6" ="S - PV12397",
+                       "TP-CK-18S-CW2-1-gc2_bc7" ="S - PV12399",
+                       "TP-CK-18S-CW2-1-gc2_bc8" ="S - PV12401_severe",
+                       "TP-CK-18S-CW2-1-gc2_bc9" ="S - PV12413",
+                       "TP-CK-18S-CW2-1-gc2_bc10"="S - PV12420",
+                       "TP-CK-18S-CW2-1-gc2_bc11"="S - PV13343",
+                       "TP-CK-18S-CW2-1-gc2_bc12"="M - PV09464",
+                       
+                       "TP-CK-18S-CW3-2-gc2_bc1" ="M - PV09504",
+                       "TP-CK-18S-CW3-2-gc2_bc2" ="M - PV09411",
+                       "TP-CK-18S-CW3-2-gc2_bc3" ="M - PV09412",
+                       "TP-CK-18S-CW3-2-gc2_bc4" ="M - PV09425",
+                       "TP-CK-18S-CW3-2-gc2_bc5" ="M - PV09427",
+                       "TP-CK-18S-CW3-2-gc2_bc6" ="M - PV09429",
+                       "TP-CK-18S-CW3-2-gc2_bc7" ="M - PV09430",
+                       "TP-CK-18S-CW3-2-gc2_bc8" ="M - PV09432",
+                       "TP-CK-18S-CW3-2-gc2_bc9" ="M - PV09433",
+                       "TP-CK-18S-CW3-2-gc2_bc10"="M - PV09449",
+                       "TP-CK-18S-CW3-2-gc2_bc11"="M - PV09450",
+                       "TP-CK-18S-CW3-2-gc2_bc12"="M - PV09451",
+                       
+                       "TP-CK-18S-CW4-1-gc1_bc1" ="M - PV09452",
+                       "TP-CK-18S-CW4-1-gc1_bc2" ="M - PV09453",
+                       "TP-CK-18S-CW4-1-gc1_bc3" ="M - PV09454",
+                       "TP-CK-18S-CW4-1-gc1_bc4" ="M - PV09455",
+                       "TP-CK-18S-CW4-1-gc1_bc5" ="M - PV09459",
+                       "TP-CK-18S-CW4-1-gc1_bc6" ="M - PV09460",
+                       "TP-CK-18S-CW4-1-gc1_bc7" ="M - PV09466",
+                       "TP-CK-18S-CW4-1-gc1_bc8" ="M - PV09467",
+                       "TP-CK-18S-CW4-1-gc1_bc9" ="M - PV09471",
+                       "TP-CK-18S-CW4-1-gc1_bc10"="M - PV09472",
+                       "TP-CK-18S-CW4-1-gc1_bc11"="M - PV09480",
+                       "TP-CK-18S-CW4-1-gc1_bc12"="M - PV09481",
+                       
+                       "TP-CK-18S-CW5-2-gc3_bc1" ="M - PV09482",
+                       "TP-CK-18S-CW5-2-gc3_bc2" ="M - PV09486",
+                       "TP-CK-18S-CW5-2-gc3_bc3" ="M - PV09493",
+                       "TP-CK-18S-CW5-2-gc3_bc4" ="M - PV09495",
+                       "TP-CK-18S-CW5-2-gc3_bc5" ="M - PV12349",
+                       "TP-CK-18S-CW5-2-gc3_bc6" ="M - PV12358",
+                       "TP-CK-18S-CW5-2-gc3_bc7" ="M - PV12362",
+                       "TP-CK-18S-CW5-2-gc3_bc8" ="M - PV12376",
+                       "TP-CK-18S-CW5-2-gc3_bc9" ="M - PV12408",
+                       "TP-CK-18S-CW5-2-gc3_bc10"="M - PV12414",
+                       "TP-CK-18S-CW5-2-gc3_bc11"="M - PV09423",
+                       "TP-CK-18S-CW5-2-gc3_bc12"="" #Never was
+                       )
+
+
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$gene <- as.character(output$gene)
+  output$base <- as.character(output$base)
+  return(output)
+}
+
+data_COVID_base <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+data_COVID_base <- data_COVID_base %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="SARS-CoV2")
+
+```
+
+###Extra processing
+```{r}
+#Remove select snoRNAs, rRNAs, and control RNAs from subsequent analysis
+temp <- data_COVID_base #%>%
+  # filter(gene %nin% c("NR_004394.1",
+  #                     "NR_002716.3",
+  #                     "NR_003925.1",
+  #                     "NR_004430.2",
+  #                     "NR_002756.2",
+  #                     "NR_004391.1",
+  #                     "NR_004392.1",
+  #                     "NR_004393.1",
+  #                     "NR_001571.2",
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", #Used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) #%>%
+  # select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+#Rename Met genes as elongator or initiator based on 5' A/C or G respectively
+temp_iMet <- temp %>%
+  filter(AA =="Met" ,
+         bin_start=="-3") %>%
+  #filter(position==1) %>%
+  mutate(gene_symbol2 = ifelse(gene %in% c("Homo_sapiens_chr6.trna61-MetCAT",
+                                           "Homo_sapiens_chr1.trna32-MetCAT",
+                                           "Homo_sapiens_chr9.trna1-MetCAT"), 
+                               paste0(AA, "i"), paste0(AA,"e")) ) %>%
+  #https://www.ncbi.nlm.nih.gov/pmc/articles/PMC108860/#:~:text=A%20special%20methionine%20tRNA%20is,linkages%20(33%2C%2048).
+  group_by(gene) %>%
+  summarise(gene_symbol2 = gene_symbol2[1] )
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup"))
+
+COVID_base <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+
+##Read in counter
+```{r}
+PATH="./data/20201020_CovidSwabs/6_sam_counter/hg19CCA+mito_adjusted_names+5Setc_020321/"
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl(".out", file_name),
+         !grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2","barcode", "junk3","bin_start","bin_stop","junk4"))%>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1, -junk2, -junk3, -junk4, -barcode, -library) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-18S-CW1-2-gc2_bc1" ="S - PV12416", 
+                       "TP-CK-18S-CW1-2-gc2_bc2" ="S - PV09457",
+                       "TP-CK-18S-CW1-2-gc2_bc3" ="S - PV09461",
+                       "TP-CK-18S-CW1-2-gc2_bc4" ="S - PV09463",
+                       "TP-CK-18S-CW1-2-gc2_bc5" ="S - PV09468", #SEVERE
+                       "TP-CK-18S-CW1-2-gc2_bc6" ="S - PV09470",
+                       "TP-CK-18S-CW1-2-gc2_bc7" ="S - PV09492", #SEVERE
+                       "TP-CK-18S-CW1-2-gc2_bc8" ="S - PV12337",
+                       "TP-CK-18S-CW1-2-gc2_bc9" ="", #"PV12343 - S", #X
+                       "TP-CK-18S-CW1-2-gc2_bc10"="S - PV12355",
+                       "TP-CK-18S-CW1-2-gc2_bc11"="S - PV12357", #SEVERE
+                       "TP-CK-18S-CW1-2-gc2_bc12"="S - PV12364",
+                       
+                       "TP-CK-18S-CW2-1-gc2_bc1" ="", #"PV12368 - S", #X
+                       "TP-CK-18S-CW2-1-gc2_bc2" ="S - PV12369",
+                       "TP-CK-18S-CW2-1-gc2_bc3" ="S - PV12372",
+                       "TP-CK-18S-CW2-1-gc2_bc4" ="S - PV12381",
+                       "TP-CK-18S-CW2-1-gc2_bc5" ="S - PV12382",
+                       "TP-CK-18S-CW2-1-gc2_bc6" ="S - PV12397",
+                       "TP-CK-18S-CW2-1-gc2_bc7" ="S - PV12399",
+                       "TP-CK-18S-CW2-1-gc2_bc8" ="S - PV12401", #SEVERE
+                       "TP-CK-18S-CW2-1-gc2_bc9" ="S - PV12413",
+                       "TP-CK-18S-CW2-1-gc2_bc10"="S - PV12420",
+                       "TP-CK-18S-CW2-1-gc2_bc11"="S - PV13343",
+                       "TP-CK-18S-CW2-1-gc2_bc12"="M - PV09464",
+                       
+                       "TP-CK-18S-CW3-2-gc2_bc1" ="M - PV09504",
+                       "TP-CK-18S-CW3-2-gc2_bc2" ="M - PV09411",
+                       "TP-CK-18S-CW3-2-gc2_bc3" ="M - PV09412",
+                       "TP-CK-18S-CW3-2-gc2_bc4" ="M - PV09425",
+                       "TP-CK-18S-CW3-2-gc2_bc5" ="M - PV09427",
+                       "TP-CK-18S-CW3-2-gc2_bc6" ="M - PV09429",
+                       "TP-CK-18S-CW3-2-gc2_bc7" ="M - PV09430",
+                       "TP-CK-18S-CW3-2-gc2_bc8" ="M - PV09432",
+                       "TP-CK-18S-CW3-2-gc2_bc9" ="M - PV09433",
+                       "TP-CK-18S-CW3-2-gc2_bc10"="M - PV09449",
+                       "TP-CK-18S-CW3-2-gc2_bc11"="M - PV09450",
+                       "TP-CK-18S-CW3-2-gc2_bc12"="M - PV09451",
+                       
+                       "TP-CK-18S-CW4-1-gc1_bc1" ="M - PV09452",
+                       "TP-CK-18S-CW4-1-gc1_bc2" ="M - PV09453",
+                       "TP-CK-18S-CW4-1-gc1_bc3" ="M - PV09454",
+                       "TP-CK-18S-CW4-1-gc1_bc4" ="M - PV09455",
+                       "TP-CK-18S-CW4-1-gc1_bc5" ="M - PV09459",
+                       "TP-CK-18S-CW4-1-gc1_bc6" ="M - PV09460",
+                       "TP-CK-18S-CW4-1-gc1_bc7" ="M - PV09466",
+                       "TP-CK-18S-CW4-1-gc1_bc8" ="M - PV09467",
+                       "TP-CK-18S-CW4-1-gc1_bc9" ="M - PV09471",
+                       "TP-CK-18S-CW4-1-gc1_bc10"="M - PV09472",
+                       "TP-CK-18S-CW4-1-gc1_bc11"="M - PV09480",
+                       "TP-CK-18S-CW4-1-gc1_bc12"="M - PV09481",
+                       
+                       "TP-CK-18S-CW5-2-gc3_bc1" ="M - PV09482",
+                       "TP-CK-18S-CW5-2-gc3_bc2" ="M - PV09486",
+                       "TP-CK-18S-CW5-2-gc3_bc3" ="M - PV09493",
+                       "TP-CK-18S-CW5-2-gc3_bc4" ="M - PV09495",
+                       "TP-CK-18S-CW5-2-gc3_bc5" ="M - PV12349",
+                       "TP-CK-18S-CW5-2-gc3_bc6" ="M - PV12358",
+                       "TP-CK-18S-CW5-2-gc3_bc7" ="M - PV12362",
+                       "TP-CK-18S-CW5-2-gc3_bc8" ="M - PV12376",
+                       "TP-CK-18S-CW5-2-gc3_bc9" ="M - PV12408",
+                       "TP-CK-18S-CW5-2-gc3_bc10"="M - PV12414",
+                       "TP-CK-18S-CW5-2-gc3_bc11"="M - PV09423",
+                       "TP-CK-18S-CW5-2-gc3_bc12"="" #Never was
+                       )
+
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$name <- as.character(output$name)
+  return(output)
+}
+
+data_COVID_count <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+
+data_COVID_count <- data_COVID_count %>%
+  mutate(gene=name) %>%
+  select(-name)
+
+data_COVID_count <- data_COVID_count %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="SARS-CoV2")
+
+```
+
+
+###Extra processing
+```{r}
+
+temp <- data_COVID_count #%>%
+  # filter(gene %nin% c("NR_004394.1", #U6
+  #                     "NR_002716.3", #U2
+  #                     "NR_003925.1", #U4
+  #                     "NR_004430.2", #U1
+  #                     "NR_002756.2", #U5A
+  #                     "NR_004391.1", #Y1
+  #                     "NR_004392.1", #Y3
+  #                     "NR_004393.1", #Y4
+  #                     "NR_001571.2", #Y5
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", #Used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) %>%
+  select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup")) 
+
+#BESPOKE
+temp <- temp %>%
+  filter(outcome !="")
+
+COVID_count <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+#_
+#Influenza
+##Read in basewise
+```{r}
+PATH <- "./data/20200617_InfluenzaSwabs/5_tsv/hg19CCA+mito_adjusted_names+5Setc_020321/"
+# PATH="../../20201021_COVID/5_tsv/hg19CCA+mito_adjusted_names+5Setc/" #Old stuff is good still
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2", "junk3","barcode", "junk4","bin_start","bin_stop","junk5")) %>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1, -junk2,-junk3, -junk4, -barcode, -library, -junk5) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-pl1-CW-5_bc5" = "flu - influenza_1(D5)", 
+                       "TP-CK-pl1-CW-5_bc6" = "flu - influenza_2(E3)",
+                       "TP-CK-pl1-CW-5_bc7" = "flu - influenza_3(G2)",
+                       "TP-CK-pl1-CW-5_bc8" = "flu - influenza_4(F5)"
+                       )
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$gene <- as.character(output$gene)
+  output$base <- as.character(output$base)
+  return(output)
+}
+
+data_flu_base <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+data_flu_base <- data_flu_base %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="influenza")
+
+```
+
+###Extra processing
+```{r}
+#Remove select snoRNAs, rRNAs, and control RNAs from subsequent analysis
+temp <- data_flu_base #%>%
+  # filter(gene %nin% c("NR_004394.1",
+  #                     "NR_002716.3",
+  #                     "NR_003925.1",
+  #                     "NR_004430.2",
+  #                     "NR_002756.2",
+  #                     "NR_004391.1",
+  #                     "NR_004392.1",
+  #                     "NR_004393.1",
+  #                     "NR_001571.2",
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", #Used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) #%>%
+  # select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+
+# #Rename Met genes as elongator or initiator based on 5' A/C or G respectively
+# temp_iMet <- temp %>%
+#   filter(AA =="Met" ,
+#          bin_start=="-3") %>%
+#   #filter(position==1) %>%
+#   mutate(gene_symbol2 = ifelse(gene %in% c("Homo_sapiens_chr6.trna61-MetCAT",
+#                                            "Homo_sapiens_chr1.trna32-MetCAT",
+#                                            "Homo_sapiens_chr9.trna1-MetCAT"), 
+#                                paste0(AA, "i"), paste0(AA,"e")) ) %>%
+#   #https://www.ncbi.nlm.nih.gov/pmc/articles/PMC108860/#:~:text=A%20special%20methionine%20tRNA%20is,linkages%20(33%2C%2048).
+#   group_by(gene) %>%
+#   summarise(gene_symbol2 = gene_symbol2[1] )
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup"))
+
+flu_base <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+##Read in counter
+```{r}
+# PATH="../202010_covid/6_sam_counter/hg19CCA+mito_adjusted_names+5Setc_020321/"
+PATH <- "./data/20200617_InfluenzaSwabs/6_sam_counter/hg19CCA+mito_adjusted_names+5Setc_020321/"
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl(".out", file_name),
+         !grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2", "junk3","barcode", "junk4","bin_start","bin_stop")) %>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1, -junk2, -junk4, -junk3, -barcode, -library) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-pl1-CW-5_bc5" = "flu - influenza_1(D5)", 
+                       "TP-CK-pl1-CW-5_bc6" = "flu - influenza_2(E3)",
+                       "TP-CK-pl1-CW-5_bc7" = "flu - influenza_3(G2)",
+                       "TP-CK-pl1-CW-5_bc8" = "flu - influenza_4(F5)"
+                       )
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$name <- as.character(output$name)
+  return(output)
+}
+
+data_flu_count <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+
+data_flu_count <- data_flu_count %>%
+  mutate(gene=name) %>%
+  select(-name)
+
+data_flu_count <- data_flu_count %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="influenza")
+
+```
+
+
+###Extra processing
+```{r}
+
+temp <- data_flu_count #%>%
+  # filter(gene %nin% c("NR_004394.1", #U6
+  #                     "NR_002716.3", #U2
+  #                     "NR_003925.1", #U4
+  #                     "NR_004430.2", #U1
+  #                     "NR_002756.2", #U5A
+  #                     "NR_004391.1", #Y1
+  #                     "NR_004392.1", #Y3
+  #                     "NR_004393.1", #Y4
+  #                     "NR_001571.2", #Y5
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", # Used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) %>%
+  select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup")) 
+
+#BESPOKE
+temp <- temp %>%
+  filter(outcome !="")
+
+flu_count <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+
+
+#_
+#Healthy
+##Read in basewise
+```{r}
+PATH <- "./data/20200601_HealthySwabs/5_tsv/hg19CCA+mito_adjusted_names+5Setc_020321/"
+# PATH="../../20201021_COVID/5_tsv/hg19CCA+mito_adjusted_names+5Setc/" #Old stuff is good still
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2","barcode", "junk3","bin_start","bin_stop")) %>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1,-junk2, -junk3, -barcode, -library) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-6S-CW1-RPI1_bc1"="healthy - ctrl1_method1",
+                       "TP-CK-6S-CW1-RPI2_bc1"="healthy - ctrl2_method1",
+                       "TP-CK-6S-CW1-RPI3_bc1"="healthy - ctrl3_method1",
+                       "TP-CK-6S-CW1-RPI4_bc1"="healthy - ctrl4_method1",
+                       "TP-CK-6S-CW1-RPI5_bc1"="healthy - ctrl5_method1",
+                       "TP-CK-6S-CW1-RPI6_bc1"="healthy - ctrl1_method2",
+                       "TP-CK-6S-CW1-RPI7_bc1"="healthy - ctrl2_method2",
+                       "TP-CK-6S-CW1-RPI8_bc1"="healthy - ctrl3_method2",
+                       "TP-CK-6S-CW1-RPI9_bc1"="healthy - ctrl4_method2",
+                       "TP-CK-6S-CW1-RPI10_bc1"="healthy - ctrl5_method2")
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$gene <- as.character(output$gene)
+  output$base <- as.character(output$base)
+  return(output)
+}
+
+data_healthy_base <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+data_healthy_base <- data_healthy_base %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="healthy") %>%
+  filter(grepl("method1", patient))
+
+```
+
+###Extra processing
+```{r}
+#Remove select snoRNAs, rRNAs, and control RNAs from subsequent analysis
+temp <- data_healthy_base #%>%
+  # filter(gene %nin% c("NR_004394.1",
+  #                     "NR_002716.3",
+  #                     "NR_003925.1",
+  #                     "NR_004430.2",
+  #                     "NR_002756.2",
+  #                     "NR_004391.1",
+  #                     "NR_004392.1",
+  #                     "NR_004393.1",
+  #                     "NR_001571.2",
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", # Used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) #%>%
+  # select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+#Rename Met genes as elongator or initiator based on 5' A/C or G respectively
+temp_iMet <- temp %>%
+  filter(AA =="Met" ,
+         bin_start=="-3") %>%
+  #filter(position==1) %>%
+  mutate(gene_symbol2 = ifelse(gene %in% c("Homo_sapiens_chr6.trna61-MetCAT",
+                                           "Homo_sapiens_chr1.trna32-MetCAT",
+                                           "Homo_sapiens_chr9.trna1-MetCAT"), 
+                               paste0(AA, "i"), paste0(AA,"e")) ) %>%
+  #https://www.ncbi.nlm.nih.gov/pmc/articles/PMC108860/#:~:text=A%20special%20methionine%20tRNA%20is,linkages%20(33%2C%2048).
+  group_by(gene) %>%
+  summarise(gene_symbol2 = gene_symbol2[1] )
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup"))
+
+healthy_base <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+##Read in counter
+```{r}
+# PATH="../202010_covid/6_sam_counter/hg19CCA+mito_adjusted_names+5Setc_020321/"
+PATH <- "./data/20200601_HealthySwabs/6_sam_counter/hg19CCA+mito_adjusted_names+5Setc_020321/"
+FILES <-data.frame( file_name = list.files(PATH) ) %>%
+  filter(!grepl(".out", file_name),
+         !grepl("unassigned", file_name))
+
+#Split generic file names into salient parts
+FILES <- FILES %>%
+  extract(file_name, "(.*).tsv", into="file_name2", remove=FALSE) %>%
+  separate(file_name2, remove=TRUE, sep="_", c("library","junk1", "junk2","barcode", "junk3","bin_start","bin_stop")) %>%
+  mutate(sample = paste0(library, "_", barcode)) %>%
+  select(-junk1, -junk2, -junk3, -barcode, -library) 
+
+#PROJECT SPECIFIC DECODING
+FILES$file_name <- as.character(FILES$file_name)
+# FILES$bin_start <- as.character(FILES$bin_start)
+# FILES$bin_stop <- as.character(FILES$bin_stop)
+FILES$sample <- recode(FILES$sample, 
+                       "TP-CK-6S-CW1-RPI1_bc1"="healthy - ctrl1_method1",
+                       "TP-CK-6S-CW1-RPI2_bc1"="healthy - ctrl2_method1",
+                       "TP-CK-6S-CW1-RPI3_bc1"="healthy - ctrl3_method1",
+                       "TP-CK-6S-CW1-RPI4_bc1"="healthy - ctrl4_method1",
+                       "TP-CK-6S-CW1-RPI5_bc1"="healthy - ctrl5_method1",
+                       "TP-CK-6S-CW1-RPI6_bc1"="healthy - ctrl1_method2",
+                       "TP-CK-6S-CW1-RPI7_bc1"="healthy - ctrl2_method2",
+                       "TP-CK-6S-CW1-RPI8_bc1"="healthy - ctrl3_method2",
+                       "TP-CK-6S-CW1-RPI9_bc1"="healthy - ctrl4_method2",
+                       "TP-CK-6S-CW1-RPI10_bc1"="healthy - ctrl5_method2")
+
+
+#=======================+
+FILES <- FILES %>%
+  mutate(bin_start = ifelse(is.na(bin_start), -3, bin_start),
+         bin_stop = ifelse(is.na(bin_stop), -3, bin_stop))
+#========================
+
+
+read_in_one <- function(row){
+  output <- read.csv(paste0(PATH, row$file_name), header=T, sep="\t") %>%
+    mutate(bin_start = row$bin_start,
+           bin_stop  = row$bin_stop,
+           sample = row$sample)
+  #specify data types since enpty dataframes get confused and sad
+  output$name <- as.character(output$name)
+  return(output)
+}
+
+data_healthy_count <- FILES %>%
+  group_by(file_name) %>%
+  do(read_in_one(.)) %>%
+  ungroup()
+
+
+data_healthy_count <- data_healthy_count %>%
+  mutate(gene=name) %>%
+  select(-name)
+
+data_healthy_count <- data_healthy_count %>%
+  filter(gene %nin% c("Ecoli_Lys","Ecoli_Tyr","Yeast_Phe",
+                      "spikein_SCC1", "spikein_SCCA1",
+                      "spikein_SCCA2", "spikein_SCCA3")) %>%
+  separate(sample, sep=" - ", into=c("outcome", "patient")) %>%
+  mutate(condition="healthy") %>%
+  filter(grepl("method1", patient))
+
+```
+
+
+###Extra processing
+```{r}
+
+temp <- data_healthy_count #%>%
+  # filter(gene %nin% c("NR_004394.1", #U6
+  #                     "NR_002716.3", #U2
+  #                     "NR_003925.1", #U4
+  #                     "NR_004430.2", #U1
+  #                     "NR_002756.2", #U5A
+  #                     "NR_004391.1", #Y1
+  #                     "NR_004392.1", #Y3
+  #                     "NR_004393.1", #Y4
+  #                     "NR_001571.2", #Y5
+  #                     "Homo_sapiens_chrX.rRNA-5SR5SR",
+  #                     # "Homo_sapiens_chrX.rRNA-58S58S", #used for normalization
+  #                     "Ecoli_Tyr",
+  #                     "Yeast_Phe",
+  #                     "Ecoli_Lys",
+  #                     "spikein_SCC1",
+  #                     "spikein_SCCA1"))
+
+#fix mitochondrial names
+#Then rearrange all names
+temp <- temp %>%
+  mutate(source="cytosolic")
+
+temp <- temp %>%
+  filter(grepl("mt", gene)) %>%
+  mutate(gene = paste0("Homo_sapiens_chrMT.trna1-", gene)) %>%
+  mutate(source="mitochondrial") %>%
+  rbind(filter(temp, !grepl("mt",gene))) %>%
+  select(-file_name)
+
+#Simplify names
+temp$info <- str_replace_all(temp$gene, "Homo_sapiens_","")
+
+temp <- temp%>%
+  separate(info, sep="-", c("chr","AA")) %>%
+  separate(AA, sep= -3, c("AA", "anticodon")) 
+
+#Resume fMet filtering
+temp <- temp %>%
+  full_join(., temp_iMet, by=c("gene")) %>%
+  mutate(AA = ifelse(is.na(gene_symbol2), AA, gene_symbol2) ) %>%
+  select(-gene_symbol2) 
+
+temp <- temp %>%
+  filter(AA %nin% c("Undet", "Sup")) 
+
+#BESPOKE
+temp <- temp %>%
+  filter(outcome !="")
+
+healthy_count <- temp %>%
+  filter(!grepl("AsnATT", gene),
+         !grepl("SerACC", gene),
+         !grepl("CysACA", gene),
+         !grepl("TyrATA", gene),
+         !(anticodon=="GAT" & AA=="Ile" & source=="cytosolic"),
+         !grepl("SeCTCA", gene),
+         !grepl("SerACT", gene))
+
+```
+
+
+
+#_
+#Combine data
+```{r}
+combine_base = rbind(COVID_base, flu_base, healthy_base) %>%
+  filter(outcome !="")
+
+combine_count = rbind(COVID_count, flu_count, healthy_count)
+
+```
+
+
+
+#_
+#Figures
+
+##Fragment abundance
+###figure - Total fragment abundance by disease
+```{r}
+temp <- combine_count %>%
+  filter(bin_start %in% c(10,20,30,40,50,60)) %>%
+  select(-bin_stop) %>%
+  group_by(patient, bin_start, condition) %>%
+  summarise(count_bin = sum(count)) %>%
+  group_by(patient, condition) %>%
+  mutate(fraction_bin = count_bin / sum(count_bin))
+
+temp$bin_start <- recode(temp$bin_start, "20"="20-30\nD-stem\ncleavage", "30"="30-40\nAnticodon-loop\ncleavage", "40"="40-50\nVariable loop\ncleavage",
+                         "50"="50-60\nT-stem\ncleavage", "60"="60+\nfull length")
+
+plot1 <- ggplot(temp, 
+       aes(x=bin_start, y=fraction_bin, group=interaction(condition, bin_start), shape=condition)) +
+  geom_boxplot() +
+  xlab("Position of read 3' end") +
+  ylab("Fraction of reads") +
+  scale_y_continuous(limits=c(0,1), breaks=c(0,0.5,1)) +
+  geom_point(position = position_dodge(width = 0.75)) +
+  theme(legend.position = c(0.15,0.75),
+        legend.background = element_rect(color="black"))
+  # scale_y_log10()
+
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="Total_fragmentation"
+width=4
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+```
+
+
+
+
+###Isoacceptor fragment abundance
+```{r}
+temp <- combine_count %>%
+  filter(bin_start %nin% c("-1","-2","-3"),
+         condition=="SARS-CoV2") %>%
+  select(-bin_stop) %>%
+  group_by(patient, bin_start, condition, outcome, anticodon, AA) %>%
+  summarise(count_bin = sum(count)) %>%
+  group_by(patient, outcome, anticodon, AA) %>%
+  mutate(fraction_bin = count_bin / sum(count_bin)) %>%
+  filter(count_bin >= 50)
+
+
+temp$outcome <- recode(temp$outcome, "M"="Mild", "S"="Severe")
+temp$bin_start <- recode(temp$bin_start, "20"="20-30", "30"="30-40", "40"="40-50",
+                         "50"="50-60", "60"="60+")
+my_comparisons <- list( c("Mild", "Severe"))
+
+plot1 <- ggplot(filter(temp, bin_start=="30-40",
+              anticodon %in% c("AGC", "ACG", "CTT")
+              ),
+       aes(x=outcome, y=fraction_bin)) +
+  geom_boxplot() +
+  geom_point() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  scale_y_log10(limits=c(0.05, 2),
+                breaks=c(0.1, 0.5, 1)) +
+  facet_grid(cols = vars(paste0(AA, anticodon))) +
+  ylab("Fraction of tRNA reads\nthat are 5'-half fragments") +
+  theme(strip.background = element_blank(),
+        axis.text.x = element_text(angle=90, vjust=0.5),
+        axis.title.x = element_blank())
+
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="COVID_fragmentat_examples"
+width=2.5
+height=2 
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+#That's a banger of a result
+
+```
+
+###Attempt at ROC curve
+####figure - Ala 30 fragment
+```{r}
+library(pROC)
+
+temp <- combine_count %>%
+  filter(bin_start %in% c(10,20,30,40,50,60)) %>%
+  select(-bin_stop) %>%
+  group_by(patient, bin_start, condition, AA, anticodon, source, outcome) %>%
+  summarise(count_bin = sum(count)) %>%
+  group_by(patient, condition, AA, anticodon, source, outcome) %>%
+  mutate(fraction_bin = count_bin / sum(count_bin))
+
+temp <- temp %>%
+  # filter(bin_start == 30) %>%
+  filter(count_bin >= 10,
+         source == "cytosolic",
+         anticodon %nin% c("U1r", "U1r", "Y1r","Y5r"))
+
+# temp$outcome <- recode(temp$outcome, "M"="Mild", "S"="Severe", "healthy"="healthy", "flu"="influenza")
+temp$bin_start <- recode(temp$bin_start, "20"="20-30", "30"="30-40", "40"="40-50",
+                         "50"="50-60", "60"="60+")
+
+temp2 <- temp %>%
+  filter(bin_start == "30-40",
+         AA %in% c("Ala"),#,"Asp","Val"),
+         anticodon %in% c("AGC"),
+         condition %in% c("SARS-CoV2")) %>%
+  roc(outcome, fraction_bin)
+
+plot1 <- ggroc(temp2, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp2$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3) +
+  xlab("False positive rate") +
+  ylab("True positive rate") +
+  coord_equal() +
+  ggtitle("AlaAGC 5'-tRF abundance")
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="Alafragment_ROC"
+width=3
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+
+
+##_
+##Abundance
+
+##Specific isodecoders
+###Trp
+```{r}
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Trp")) %>%
+  filter(grepl("chr17.trna12", gene))
+
+my_comparisons <- list( c("Mild", "Severe"),
+                        c("healthy", "influenza"),
+                        c("healthy", "Mild"),
+                        c("healthy", "Severe")
+                        )
+
+ggplot(temp, 
+       aes(x=interaction(outcome), y=rpm / rpm_58S)) +
+  geom_boxplot() +
+  geom_point() + 
+  scale_y_log10() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  facet_wrap(~gene) +
+  ylab("tRNA abundance normalized to rRNA") +
+  theme(axis.title.x = element_blank())
+
+```
+
+####figure - ROC curve
+```{r}
+
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Trp")) %>%
+  filter(grepl("chr17.trna12", gene))
+
+temp2 <- temp %>%
+  filter(condition %in% c("SARS-CoV2")) %>% 
+  mutate(ratio = rpm/rpm_58S) %>%
+  roc(outcome, ratio)
+
+plot1 <- ggroc(temp2, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp2$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3)
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="Trp_ROC"
+width=3
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+
+```
+
+###Ala
+```{r}
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Ala")) %>%
+  filter(grepl("chr6.trna120", gene))
+
+my_comparisons <- list( c("Mild", "Severe"),
+                        c("healthy", "influenza"),
+                        c("healthy", "Mild"),
+                        c("healthy", "Severe")
+                        )
+
+ggplot(temp, 
+       aes(x=interaction(outcome), y=rpm / rpm_58S)) +
+  geom_boxplot() +
+  geom_point() + 
+  scale_y_log10() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  facet_wrap(~gene) +
+  ylab("tRNA abundance normalized to rRNA") +
+  theme(axis.title.x = element_blank())
+
+```
+
+
+####ROC
+```{r}
+
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Ala")) %>%
+  filter(grepl("chr6.trna120", gene))
+
+temp2 <- temp %>%
+  filter(condition %in% c("SARS-CoV2")) %>% 
+  mutate(ratio = rpm/rpm_58S) %>%
+  roc(outcome, ratio)
+
+ggroc(temp2, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp2$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3)
+
+```
+
+
+
+###Meti
+```{r}
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Meti")) #%>%
+  # filter(grepl("chr6.trna120", gene))
+
+my_comparisons <- list( c("Mild", "Severe"),
+                        c("healthy", "influenza"),
+                        c("healthy", "Mild"),
+                        c("healthy", "Severe")
+                        )
+
+ggplot(temp, 
+       aes(x=interaction(outcome), y=rpm / rpm_58S)) +
+  geom_boxplot() +
+  geom_point() + 
+  scale_y_log10() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  facet_wrap(~gene) +
+  ylab("tRNA abundance normalized to rRNA") +
+  theme(axis.title.x = element_blank())
+
+```
+
+
+####figure - ROC
+```{r}
+
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Meti")) #%>%
+  filter(grepl("chr1.trna69", gene))
+
+temp2 <- temp %>%
+  filter(condition %in% c("SARS-CoV2")) %>% 
+  mutate(ratio = rpm/rpm_58S) %>%
+  roc(outcome, ratio)
+
+plot1 <- ggroc(temp2, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp2$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3) +
+  xlab("False positive rate") +
+  ylab("True positive rate") +
+  coord_equal() +
+  ggtitle("iMetCAT abundance")
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="iMet_ROC"
+width=3
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+
+
+
+###Pro
+```{r}
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp <- temp %>%
+  filter(AA %in% c("Pro")) #%>%
+  # filter(grepl("chr6.trna120", gene))
+
+my_comparisons <- list( c("Mild", "Severe"),
+                        c("healthy", "influenza"),
+                        c("healthy", "Mild"),
+                        c("healthy", "Severe")
+                        )
+
+ggplot(temp, 
+       aes(x=interaction(outcome), y=rpm / rpm_58S)) +
+  geom_boxplot() +
+  geom_point() + 
+  scale_y_log10() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  facet_wrap(~gene) +
+  ylab("tRNA abundance normalized to rRNA") +
+  theme(axis.title.x = element_blank())
+
+```
+
+##figure - Combine examples
+```{r}
+#Necessary for rRNA normalization
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="SARS-CoV2\nMild", "S"="SARS-CoV2\nSevere")
+
+temp <- temp %>%
+  filter(AA %in% c("Trp", "Ala", "Meti", "Pro")) %>%
+  filter(grepl("chr17.trna12", gene) |
+           grepl("chr6.trna120", gene) |
+           grepl("chr1.trna32", gene) | 
+           grepl("chr1.trna52", gene) )
+
+temp <- temp %>%
+  separate(gene, sep="_", into=c("Homo", "sapiens", "chr")) %>%
+  separate(chr, sep="-", into=c("chr","chr2"))
+
+my_comparisons <- list( c("SARS-CoV2\nMild", "SARS-CoV2\nSevere"),
+                        c("healthy", "influenza"),
+                        c("healthy", "SARS-CoV2\nMild"),
+                        c("healthy", "SARS-CoV2\nSevere") )
+
+plot1 <- ggplot(temp, 
+       aes(x=interaction(outcome), y=rpm / rpm_58S )) +
+  geom_boxplot() +
+  geom_point() + 
+  scale_y_log10(limits=c(0.0005, 10)
+                ) +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  facet_grid(cols=vars(paste0(AA, anticodon, "\n", chr))) +
+  ylab("tRNA abundance\nnormalized to rRNA") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="nasal_swab_abundance_examples"
+width=4.5
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+
+
+##_
+##Modification
+
+###Meti
+```{r}
+temp <- combine_base %>%
+  filter(AA == "Meti") %>%
+  filter(grepl("chr1.trna32", gene)) %>%
+  filter(position == 57, 
+         pileup >= 50) %>%
+  filter(bin_start==-2)
+
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="SARS-CoV2\nMild", "S"="SARS-CoV2\nSevere")
+
+my_comparisons <- list( c("SARS-CoV2\nMild", "SARS-CoV2\nSevere"),
+                        c("healthy", "influenza"),
+                        c("healthy", "SARS-CoV2\nMild"),
+                        c("healthy", "SARS-CoV2\nSevere") )
+ggplot(temp,
+       aes(x=interaction(outcome), y=mutation)) + 
+  geom_boxplot() +
+  geom_point() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  ylab("Mutation rate at Meti m1A58") +
+  theme(axis.title.x = element_blank())
+```
+
+###mtVal
+```{r}
+temp <- combine_base %>%
+  filter(AA == "mtVal") %>%
+  # filter(grepl("chr1.trna32", gene)) %>%
+  filter(position == 9, 
+         pileup >= 50) %>%
+  filter(bin_start== -2)
+
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="SARS-CoV2\nMild", "S"="SARS-CoV2\nSevere")
+
+my_comparisons <- list( c("SARS-CoV2\nMild", "SARS-CoV2\nSevere"),
+                        c("healthy", "influenza"),
+                        c("healthy", "SARS-CoV2\nMild"),
+                        c("healthy", "SARS-CoV2\nSevere") )
+ggplot(temp,
+       aes(x=interaction(outcome), y=mutation)) + 
+  geom_boxplot() +
+  geom_point() +
+  scale_y_continuous(limits=c(0,1.3), breaks=c(0, 0.25, 0.5, 0.75, 1)) +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  ylab("Mutation rate") +
+  theme(axis.title.x = element_blank())
+```
+
+####figure - ROC
+```{r}
+
+temp <- combine_base %>%
+  filter(AA == "mtVal") %>%
+  # filter(grepl("chr1.trna32", gene)) %>%
+  filter(position == 9, 
+         pileup >= 50) %>%
+  filter(bin_start== -2)
+temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="SARS-CoV2\nMild", "S"="SARS-CoV2\nSevere")
+
+temp2 <- temp %>%
+  filter(condition %in% c("SARS-CoV2")) %>% 
+  mutate(metric = mutation) %>%
+  roc(outcome, metric)
+
+
+plot1 <- ggroc(temp2, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp2$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3) +
+  xlab("False positive rate") +
+  ylab("True positive rate") +
+  coord_equal() +
+  ggtitle("mtVal m1A9 methylation")
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="mtVal_RROC"
+width=3
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+
+
+
+
+##_
+##Combine ROC
+```{r}
+
+#iMetCAT abundance
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+# temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+
+temp1 <- temp %>%
+  filter(AA %in% c("Meti")) %>%
+  filter(grepl("chr1.trna32", gene)) %>%
+  mutate(metric1 = rpm/rpm_58S) %>%
+  ungroup() %>%
+  select(patient, condition, outcome, metric1)
+
+# temp1 <- temp %>%
+#   filter(condition %in% c("SARS-CoV2")) %>% 
+#   mutate(ratio = rpm/rpm_58S) %>%
+#   roc(outcome, ratio)
+
+
+#==============================================================
+#mtVal m1A9
+temp2 <- combine_base %>%
+  filter(AA == "mtVal") %>%
+  # filter(grepl("chr1.trna32", gene)) %>%
+  filter(position == 9, 
+         pileup >= 50) %>%
+  filter(bin_start== -2) %>%
+  mutate(metric2 = mutation) %>%
+  ungroup() %>%
+  select(patient, condition, outcome, metric2)
+
+
+#==============================================================
+#AlaAGC 30-40 fragment
+temp <- combine_count %>%
+  filter(bin_start %in% c(10,20,30,40,50,60)) %>%
+  select(-bin_stop) %>%
+  group_by(patient, bin_start, condition, AA, anticodon, source, outcome) %>%
+  summarise(count_bin = sum(count)) %>%
+  group_by(patient, condition, AA, anticodon, source, outcome) %>%
+  mutate(fraction_bin = count_bin / sum(count_bin))
+temp <- temp %>%
+  # filter(bin_start == 30) %>%
+  filter(count_bin >= 10,
+         source == "cytosolic",
+         anticodon %nin% c("U1r", "U1r", "Y1r","Y5r"))
+# temp$outcome <- recode(temp$outcome, "M"="Mild", "S"="Severe", "healthy"="healthy", "flu"="influenza")
+temp$bin_start <- recode(temp$bin_start, "20"="20-30", "30"="30-40", "40"="40-50",
+                         "50"="50-60", "60"="60+")
+temp3 <- temp %>%
+  filter(bin_start == "30-40",
+         AA %in% c("Ala"),#,"Asp","Val"),
+         anticodon %in% c("AGC"),
+         condition %in% c("SARS-CoV2")) %>%
+  # roc(outcome, fraction_bin)
+  mutate(metric3 = fraction_bin) %>%
+  ungroup() %>%
+  select(patient, condition, outcome, metric3)
+
+#===============================================================
+#TrpCCA c17.t12
+temp <- rbind(data_COVID_count, data_healthy_count, data_flu_count) %>%
+  filter(patient !="") %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  mutate(rpm_58S = rpm) %>%
+  filter(bin_start=="-2") %>%
+  ungroup() %>%
+  select(patient, condition, outcome, rpm_58S) 
+
+temp <- combine_count %>%
+  filter(bin_start == 60,
+         anticodon %nin% c("U6r", "U1r", "Y1r", "Y5r")) %>%
+  group_by(patient, bin_start, condition, outcome) %>%
+  mutate(rpm = count / sum(count)) %>%
+  group_by(patient, condition, source, outcome, AA, anticodon, gene) %>%
+  summarise(rpm = sum(rpm),
+            count = sum(count)) %>%
+  filter(count >= 10) %>%
+  full_join(., temp, by=c("patient","condition","outcome"))
+# temp$outcome <- recode(temp$outcome, "healthy"="healthy", "flu"="influenza", "M"="Mild", "S"="Severe")
+temp <- temp %>%
+  filter(AA %in% c("Trp")) %>%
+  filter(grepl("chr17.trna12", gene))
+temp4 <- temp %>%
+  filter(condition %in% c("SARS-CoV2")) %>% 
+  mutate(metric4 = rpm/rpm_58S) %>%
+  ungroup() %>%
+  select(patient, condition, outcome, metric4)
+
+
+
+temp_combine <- temp1 %>%
+  full_join(., temp2, by=c("patient", "condition", "outcome")) %>%
+  full_join(., temp3, by=c("patient", "condition", "outcome")) %>%
+  full_join(., temp4, by=c("patient", "condition", "outcome")) %>%
+  filter(!is.na(metric1), !is.na(metric2), !is.na(metric3), !is.na(metric4)) %>%
+  mutate(numeric_outcome = outcome)
+temp_combine$numeric_outcome <- recode(temp_combine$outcome, "S"=1, "M"=0)
+  
+
+
+library("maxadjAUC")
+O <- cbind(temp_combine$numeric_outcome)
+A <- cbind(temp_combine$metric1, temp_combine$metric2, temp_combine$metric3, temp_combine$metric4)
+C <- cbind(rep(c(1,2,1,2), 9) )
+
+asdf <- maxadjAUC(outcome = O,
+                  predictors = A,
+                  covariate = C )
+
+
+
+# FittedCombs$MaxSaAUC
+#          V1          V2          V3 
+# -0.85956817  0.50660369 -0.06704677
+
+temp_roc <- temp_combine %>%
+  # mutate(combine_metric = metric1* -0.71400444 +
+  #                         metric2*  0.33023594 +
+  #                         metric3* -0.03073696 +
+  #                         metric4* -0.61660128) %>% #1234
+  mutate(combine_metric = metric1* -0.57346787 +
+                          metric2*  0.29786484 +
+                          metric3* -0.03370791 +
+                          metric4* -0.76241392) %>% #1212
+  # mutate(combine_metric = metric1* -0.68028270 +
+  #                         metric2*  0.31814954 +
+  #                         metric3* -0.03217412 +
+  #                         metric4* -0.65951584) %>% #1112
+  roc(outcome, combine_metric)
+
+plot1 <- ggroc(temp_roc, legacy.axes = T) +
+  geom_text(x=0.5, y=0.5, label= paste0("auc = ", round(temp_roc$auc, 2))) +
+  # coord_cartesian(ylim = c(-1,2), xlim = c(-1, 2)) +
+  geom_abline(slope=1, linetype=2, alpha=0.3) +
+  xlab("False positive rate") +
+  ylab("True positive rate") +
+  coord_equal() +
+  ggtitle("Combine metric")
+
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="combine_metric"
+width=3
+height=2.5
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+
+
+#_
+#Some supplemental figures I guess
+#_
+
+#P-value calculations
+##Abundance
+```{r}
+get_Abundance_pvalue <- function(df){
+  asdf <- df %>%
+    ungroup() %>%
+    mutate(metric = count / rp58S) %>%
+    select(metric, outcome) %>%
+    filter(metric > -Inf,
+           metric < Inf)
+  
+  B <- length(filter(asdf, outcome=="ctrl")$metric)
+  C <- length(filter(asdf, outcome=="M")$metric)
+  D <- length(filter(asdf, outcome=="S")$metric)
+  
+  if( B<=1 | C<=1 | D<=1 ){
+    return(data.frame(N_equals.ctrl=NA))
+  }
+  
+  if(sd(asdf$metric)==0){
+    return(data.frame(N_equals.ctrl=NA))
+  }
+
+  A <- pairwise.t.test(asdf$metric, asdf$outcome, p.adjust.method = "none", alternative = "two.sided", pool.sd = F)$p.value
+  #A[1] is ctrl vs mild; A[2] is ctrl severe; A[3] is mild vs mild; A[4] is mild vs severe
+  df=data.frame(ctrl.mild=A[1],
+                ctrl.severe=A[2],
+                mild.severe=A[4],
+                N_equals.ctrl=B,
+                N_equals.mild=C, 
+                N_equals.severe=D)
+  return(df)
+}
+
+
+
+temp_abundance <- combine_count %>%
+  # mutate(severity = ifelse(grepl("S - ", sample), "severe", ifelse(grepl("M - ", sample), "mild", "ctrl"  ) )) %>%
+  group_by(patient, bin_start) %>%
+  mutate(rpm = count / sum(count)) %>%
+  ungroup()
+
+temp_abundance$outcome <- recode(temp_abundance$outcome,
+                                 "S"="S",
+                                 "M"="M",
+                                 "healthy"="ctrl")
+
+temp_abundance <- temp_abundance %>%
+  filter(gene == "Homo_sapiens_chrX.rRNA-58S58S") %>%
+  group_by(patient, bin_start) %>%
+  mutate(rp58S = count) %>%
+  select(patient, bin_start, rp58S) %>%
+  full_join(temp_abundance, ., by=c("patient", "bin_start"))  %>%
+  filter(count >0,
+         rp58S >0) %>%
+  ungroup()
+
+pvalues_abundance <- temp_abundance %>%
+  filter(count > 0,
+         rp58S > 0,
+         bin_start=="-2",
+         outcome %in% c("M","S","ctrl")) %>%
+  group_by(gene, bin_start) %>%
+  do(get_Abundance_pvalue(.) )
+
+write.csv(pvalues_abundance, "./figures/pvalues_abundance.csv")
+```
+
+
+##Fragmentation
+```{r}
+
+
+get_AA_pvalue <- function(df){
+  asdf <- df %>%
+    ungroup() %>%
+    mutate(metric = median_5_pileup / median_3_pileup) %>%
+    select(metric, outcome) %>%
+    filter(metric > -Inf,
+           metric < Inf)
+  B <- length(filter(asdf, outcome=="S")$metric)
+  C <- length(filter(asdf, outcome=="M")$metric)
+  D <- length(filter(asdf, outcome=="ctrl")$metric)
+  
+  if( B<1 | C<1 | D<1 ){
+    return(data.frame(N_equals.ctrl=NA))
+  }
+
+  A <- pairwise.t.test(asdf$metric, asdf$outcome, p.adjust.method = "none", alternative = "two.sided")$p.value
+  #A[1] is ctrl vs mild; A[2] is ctrl severe; A[3] is mild vs mild; A[4] is mild vs severe
+  df=data.frame(ctrl.mild=A[1],
+                ctrl.severe=A[2],
+                mild.severe=A[4],
+                N_equals.ctrl=D,
+                N_equals.mild=C, 
+                N_equals.severe=B)
+  return(df)
+}
+
+
+
+temp2 <- combine_base %>%
+  filter(outcome != "flu") %>%
+  group_by(outcome, bin_start) %>%
+  ungroup()
+
+temp2$outcome <- recode(temp2$outcome,
+                                 "S"="S",
+                                 "M"="M",
+                                 "healthy"="ctrl")
+
+temp2a <- temp2 %>%
+  filter(position >=10, 
+         position <=30) %>%
+  group_by(gene, patient, outcome, bin_start, AA, anticodon) %>%
+  summarise(median_5_pileup = median(pileup))
+temp2 <- temp2 %>%
+  filter(position >=40, 
+         position <=60) %>%
+  group_by(gene, outcome, patient, bin_start, AA, anticodon) %>%
+  summarise(median_3_pileup = median(pileup)) %>%
+  full_join(temp2a, ., by=c("gene","outcome","patient","bin_start","AA","anticodon")) %>%
+  ungroup()
+
+
+pvalues_fragments <- temp2 %>%
+  filter(median_5_pileup >= 1,
+         median_3_pileup >= 1,
+         bin_start=="-2") %>%
+  #filter(grepl("mt", AA)) %>%
+  group_by(gene, bin_start) %>%
+  do(get_AA_pvalue(.) )
+
+write.csv(pvalues_fragments, "./figures/pvalues_fragments.csv")
+
+```
+
+
+##Modification
+```{r}
+get_AA_pvalue <- function(df){
+  asdf <- df %>%
+    ungroup() %>%
+    mutate(metric = mutation) %>%
+    select(metric, outcome) %>%
+    filter(metric > -Inf,
+           metric < Inf)
+  
+  B <- length(filter(asdf, outcome=="healthy")$metric)
+  C <- length(filter(asdf, outcome=="M")$metric)
+  D <- length(filter(asdf, outcome=="S")$metric)
+  
+  if( B<1 | C<1 | D<1 ){
+    return(data.frame(N_equals.ctrl=NA))
+  }
+
+  A <- pairwise.t.test(asdf$metric, asdf$outcome, p.adjust.method = "none", alternative = "two.sided")$p.value
+  #A[1] is ctrl vs mild; A[2] is ctrl severe; A[3] is mild vs mild; A[4] is mild vs severe
+  df=data.frame(ctrl.mild=A[1],
+                ctrl.severe=A[2],
+                mild.severe=A[4],
+                N_equals.ctrl=B,
+                N_equals.mild=C, 
+                N_equals.severe=D)
+  return(df)
+}
+
+
+
+temp2 <- combine_base %>%
+  # mutate(severity = ifelse(grepl("S - ", sample), "severe", ifelse(grepl("M - ", sample), "mild", "ctrl"  ) )) %>%
+  group_by(patient, bin_start) %>%
+  # filter(patient != "") %>%
+  ungroup()
+
+pvalues_modifications <- temp2 %>%
+  filter(pileup >= 50,
+         bin_start=="-2") %>%
+  #filter(grepl("mt", AA)) %>%
+  group_by(gene, position, bin_start) %>%
+  do(get_AA_pvalue(.) )
+
+write.csv(pvalues_modifications, "./figures/pvalues_modifications.csv")
+
+```
+
+
+#_
+##Fragmentation plot
+```{r}
+temp2 <- combine_base %>%
+  filter(outcome != "flu") %>%
+  group_by(outcome, bin_start) %>%
+  ungroup()
+
+temp2a <- temp2 %>%
+  filter(position >=10, 
+         position <=30) %>%
+  group_by(gene, patient, outcome, bin_start, AA, anticodon) %>%
+  summarise(median_5_pileup = median(pileup))
+temp2 <- temp2 %>%
+  filter(position >=40, 
+         position <=60) %>%
+  group_by(gene, outcome, patient, bin_start, AA, anticodon) %>%
+  summarise(median_3_pileup = median(pileup)) %>%
+  full_join(temp2a, ., by=c("gene","outcome","patient","bin_start","AA","anticodon")) %>%
+  ungroup()
+
+
+asdf <- temp2 %>%
+  filter(median_5_pileup >= 1,
+         median_3_pileup >= 1,
+         bin_start=="-2") %>%
+  group_by(gene, bin_start) %>%
+  group_by(patient, outcome, bin_start, AA, anticodon) %>%
+  summarise(sum_median_5 = sum(median_5_pileup),
+            sum_median_3 = sum(median_3_pileup) )
+
+asdf$outcome <- recode(asdf$outcome, "S"="Severe", "M"="Mild")
+
+plot1 <- ggplot(filter(asdf, outcome %in% c("Mild","Severe"),
+              AA %nin% c("58S", "5SR"),
+              sum_median_5 >10, sum_median_3>10 ),
+       aes(x=paste0(AA, anticodon), color=outcome, y= sum_median_5 / sum_median_3)) +
+  geom_boxplot(alpha=0.6, position = position_dodge(width=.8)) +
+  geom_point(alpha=0.6, size=0.75,
+             position = position_dodge(width=.8)) +
+  scale_y_log10(labels=trans_format('log10',math_format(10^.x)) ) +
+  ylab("Ratio of 5' coverage to 3' coverage") +
+  theme(axis.text.x = element_text(angle=90, hjust=0, vjust=0.5),
+        axis.title.x = element_blank(),
+        )
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="Fragmentation_plot"
+width=8
+height=3
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+```
+
+##m1A9 Asp GTC
+```{r}
+
+temp <- combine_base %>%
+  filter(bin_start =="-2",
+         gene == "Homo_sapiens_chr1.trna69-AspGTC") %>%
+  filter(#AA == "Asp",
+         #anticodon == "GTC",
+         position %in% c(9),
+         pileup >=10)
+temp$outcome <- recode(temp$outcome, "M"="mild", "S"="severe")
+temp$outcome <- factor(temp$outcome, levels = c("healthy", "flu", "mild", "severe"))
+my_comparisons <- list( c("mild", "severe"), c("healthy", "mild"), c("healthy", "severe"), c("healthy", "flu") )
+
+plot1 <- ggplot(temp,
+       aes(y=mutation, x=outcome)) +
+  geom_boxplot() +
+  geom_point() +
+  stat_compare_means(comparisons = my_comparisons, size=4,  method="wilcox.test",
+                    hide.ns=F,
+                    label="p.signif"
+                     ) +
+  theme(legend.position = "right") +
+  ylab("Mutation fraction") +
+  theme(axis.title.x = element_blank())
+
+#========================================================================
+#Save the figure
+layout <- rbind(c(1))
+figure <- grid.arrange(plot1,  layout_matrix = layout)
+path="./figures/"
+figure_name="AspGTC_m1A9"
+width=3
+height=2
+scale=1.5
+dpi=600
+# ggsave(paste0(path, figure_name,".svg"), 
+#        plot = figure,
+#        scale = scale,
+#        dpi = dpi,
+#        width = width, 
+#        height = height)
+
+ggsave(paste0(path, figure_name,".png"),
+       plot = figure,
+       scale = scale,
+       dpi = dpi,
+       width = width,
+       height = height)
+
+```
+
+#_
